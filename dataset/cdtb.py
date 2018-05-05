@@ -8,12 +8,13 @@
 import os
 import pickle
 import re
-
 import tqdm
+from itertools import chain
+from typing import List
 from xml.etree import ElementTree
 from nltk.tree import ParentedTree
 from structure.tree import EDU, Sentence, Relation, Discourse
-from util import DefaultParser
+from util import ZhDefaultParser
 import logging
 
 
@@ -45,10 +46,10 @@ class CDTB:
         self.train_path = train
         self.test_path = test
         self.ctb_encoding = ctb_encoding
-        self.ctb = self.load_ctb(ctb) if ctb else None
-        self.parser = DefaultParser()
-        self.train = []
-        self.test = []
+        self.ctb = self.load_ctb(ctb, ctb_encoding) if ctb else None
+        self.parser = ZhDefaultParser()
+        self.train = []  # type: List[Discourse]
+        self.test = []  # type: List[Discourse]
         self.cache_dir = cache_dir
         self.cdtb_encoding = encoding
         self.build()
@@ -60,26 +61,28 @@ class CDTB:
             # if cache exists load from cache
             cache_file = os.path.join(self.cache_dir, cache_key)
             if os.path.exists(cache_file):
-                logging.info("load cached CDTB dataset from %s" % cache_key)
+                logger.info("load cached CDTB dataset from %s" % cache_key)
                 with open(cache_file, "rb") as cache_fd:
                     self.train = pickle.load(cache_fd)
                     self.test = pickle.load(cache_fd)
                 return
 
-        if not self.ctb:
-            logger.info("Notice! CTB is not given, %s parser will be used to generate extra syntacitcal information. "
-                        "This may take a while." % self.parser.name)
         # load train set
         logger.info("loading train set")
-        for file in tqdm.tqdm(os.listdir(self.train_path)):
-            for tree in self.load_xml(os.path.join(self.train_path, file)):
-                self.train.append(tree)
+        self.train.extend(self.load(self.train_path, self.cdtb_encoding))
 
         # load test set
         logger.info("loading test set")
-        for file in tqdm.tqdm(os.listdir(self.test_path)):
-            for tree in self.load_xml(os.path.join(self.test_path, file)):
-                self.test.append(tree)
+        self.test.extend(self.load(self.test_path, self.cdtb_encoding))
+
+        # add syntactic information
+        logger.info("add syntactic parse to sentence")
+        if not self.ctb:
+            logger.info("Notice! CTB is not given, %s parser will be used to generate extra syntacitcal information. "
+                        "This may take a while." % self.parser.name)
+        for discourse in tqdm.tqdm(chain(self.train, self.test)):
+            for sentence in discourse.sentences:
+                sentence.set(parse=self.lookup_parse(sentence))
 
         # save as cache file
         if self.cache_dir:
@@ -88,27 +91,41 @@ class CDTB:
                 pickle.dump(self.train, cache_fd)
                 pickle.dump(self.test, cache_fd)
 
-    def load_ctb(self, ctb_path):
+    @staticmethod
+    def load_ctb(ctb_path, encoding="utf-8"):
         ctb = {}
         for file in os.listdir(ctb_path):
-            with open(os.path.join(ctb_path, file), "r", encoding=self.ctb_encoding) as fd:
+            with open(os.path.join(ctb_path, file), "r", encoding=encoding) as fd:
                 for sid, parse in ctb_pat.findall(fd.read()):
                     ctb[sid] = ParentedTree.fromstring(parse)
         return ctb
 
-    def load_xml(self, file):
-        with open(file, "r", encoding=self.cdtb_encoding) as fd:
+    def lookup_parse(self, sentence):
+        if sentence.sid and self.ctb and sentence.sid in self.ctb:
+            return self.ctb[sentence.sid]
+        else:
+            return self.parser.parse(sentence.text)
+
+    @staticmethod
+    def load(path, encoding="utf-8"):
+        for file in tqdm.tqdm(os.listdir(path)):
+            yield from CDTB.load_xml(os.path.join(path, file), encoding)
+
+    @staticmethod
+    def load_xml(file, encoding="utf-8"):
+        with open(file, "r", encoding=encoding) as fd:
             dom = ElementTree.fromstring(fd.read())  # type: ElementTree.Element
             for p in dom.iterfind("P"):  # type: ElementTree.Element
                 pid = int(p.get("ID"))
                 # 忽略没有关系的段落
                 if pid > 0:
-                    yield self._dom2discourse(p, pid, os.path.dirname(file))
+                    yield CDTB._dom2discourse(p, pid, os.path.dirname(file))
 
-    def _dom2discourse(self, p, label, info):
+    @staticmethod
+    def _dom2discourse(p, label, info):
         raw = p.find("RAW")  # type: ElementTree.Element
         _text = raw.get("Sentence")
-        sentspans = self._xml2pos(raw.get("SentencePosition"))
+        sentspans = CDTB._xml2pos(raw.get("SentencePosition"))
         _sentences = []
         _offset = 0
         for s, e in sentspans:
@@ -118,29 +135,27 @@ class CDTB:
         sids = raw.get("SID").split("|") if raw.get("SID") else []
         sentences = []
         for i, span in enumerate(sentspans):
-            if self.ctb and sids:
-                parse = self.ctb[sids[i]]
-            else:
-                parse = self.parser.parse(text[slice(*span)])
-            sentences.append(Sentence(span, text[slice(*span)], parse=parse))
-        eduspans = self._xml2pos(raw.get("EduPosition"))
+            sid = sids[i] if sids else None
+            sentences.append(Sentence(span, text[slice(*span)], sid=sid))
+        eduspans = CDTB._xml2pos(raw.get("EduPosition"))
         edus = [EDU(span, text[slice(*span)]) for span in eduspans]
         del _text, _sentences, sids, sentspans, eduspans
 
-        discourse = Discourse(label, text, edus, sentences, info)
+        discourse_span = CDTB._xml2pos(raw.get("AnnotatedPosition"))[0]
+        discourse = Discourse(label, text, discourse_span, edus, sentences, info)
         relations = {}
         for r in p.find("Relations"):  # type: ElementTree.Element
             rid = r.get("ID")
             prid = r.get("ParentId")
             parent = relations[prid] if prid in relations else None
-            rspans = self._xml2pos(r.get("SentencePosition"))
+            rspans = CDTB._xml2pos(r.get("SentencePosition"))
             rspan = rspans[0][0], rspans[-1][1]
             nuclear = nuclear_map[r.get("Center")]
 
             relation_explicit = r.get("ConnectiveType") == "显式关系"
             if relation_explicit:
                 relation_connective = r.get("Connective").split("…")
-                relation_connectivespan = self._xml2pos(r.get("ConnectivePosition"))
+                relation_connectivespan = CDTB._xml2pos(r.get("ConnectivePosition"))
             else:
                 relation_connective = None
                 relation_connectivespan = None
@@ -153,7 +168,8 @@ class CDTB:
             relations[rid] = relation
         return discourse
 
-    def _xml2pos(self, s):
+    @staticmethod
+    def _xml2pos(s):
         """
         1…26|27…89 -> [(0, 26), (26, 89)]
         """

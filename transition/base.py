@@ -5,6 +5,7 @@
 @Date: 2018/4/28
 @Description: Basic Compoent of Transition System
 """
+from collections import namedtuple
 from copy import copy
 from functools import partial
 from abc import abstractmethod
@@ -68,57 +69,46 @@ class Transition:
 
 
 class Session:
-    def __init__(self, init_conf, trans, ishistory=False):
+    Memory = namedtuple("Memory", "confs actions params")
+
+    def __init__(self, init_conf, trans, history=False):
         """
         Session 表示一个转移过程
         :param init_conf: 初始状态
         :param trans: 转移系统
-        :param ishistory: 是否保留转移历史
+        :param history: 是否保留转移历史
         """
-        self.conf = init_conf
+        self.current = init_conf
         self.trans = trans
-        self.ishistory = ishistory
-        if ishistory:
-            self.history_confs = []
-            self.history_actions = []
-            self.history_params = []
+        self.history = history
+        if history:
+            self.memory = Session.Memory([], [], [])
 
     def __call__(self, action, *args, **kwargs):
-        if self.ishistory:
-            conf = copy(self.conf)
-            self.history_confs.append(self.conf)
-            self.history_actions.append(action)
-            self.history_params.append((args, kwargs))
+        if self.history:
+            conf = copy(self.current)
+            self.memory.confs.append(self.current)
+            self.memory.actions.append(action)
+            self.memory.params.append((args, kwargs))
         else:
-            conf = self.conf
-        self.conf = self.trans(action, conf, *args, **kwargs)
-        return self.conf
-
-    def history(self):
-        if not self.ishistory:
-            return None
-        else:
-            return zip(self.history_confs, self.history_actions, self.history_params)
-
-    def hook(self, when, func):
-        pass
+            conf = self.current
+        self.current = self.trans(action, conf, *args, **kwargs)
+        return self.current
 
     def valid(self):
-        return self.trans.valid(self.conf)
+        return self.trans.valid(self.current)
 
     def terminate(self):
-        return self.trans.terminate(self.conf)
+        return self.trans.terminate(self.current)
 
     def determine(self):
-        return self.trans.determine(self.conf)
+        return self.trans.determine(self.current)
 
     def __copy__(self):
         _copy = self.__new__(type(self))
-        _copy.conf = copy(self.conf)
+        _copy.current = copy(self.current)
         _copy.trans = self.trans
-        _copy.ishistory = self.ishistory
-        if self.ishistory:
-            _copy.history_confs = self.history_confs[:]
-            _copy.history_actions = self.history_actions[:]
-            _copy.history_params = self.history_params[:]
+        _copy.history = self.history
+        if self.history:
+            _copy.memory = Session.Memory(self.memory.confs[:], self.memory.actions[:], self.memory.params[:])
         return _copy

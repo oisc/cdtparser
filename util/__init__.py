@@ -2,4 +2,4 @@
 
 from . import berkeley
 
-DefaultParser = berkeley.BerkeleyParser
+ZhDefaultParser = berkeley.ZhBerkeleyParser

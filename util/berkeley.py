@@ -47,7 +47,7 @@ class BerkeleyWarpper(object):
             pass
 
 
-class BerkeleyParser(SentenceParser):
+class ZhBerkeleyParser(SentenceParser):
     name = "berkeley"
 
     def __init__(self):

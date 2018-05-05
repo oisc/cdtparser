@@ -7,7 +7,7 @@
 """
 from collections import deque
 from copy import copy
-from itertools import chain
+from itertools import chain, count
 from typing import List
 from nltk.tree import ParentedTree
 
@@ -45,10 +45,11 @@ class EDU(CDTNode):
 
 class Sentence:
     """ 句子 """
-    def __init__(self, span, text, words=None, tags=None, parse=None):
+    def __init__(self, span, text, sid=None, words=None, tags=None, parse=None):
         self.span = span
         self.offset = span[0]
         self.text = text
+        self.sid = sid
         self._words = words
         self._tags = tags
         self._parse = parse
@@ -99,7 +100,9 @@ class Sentence:
             return self._parse
 
     def __copy__(self):
-        _copy = Sentence(self.span, self.text, self._words, self._tags, self._parse)
+        words = self._words[:] if self._words else self._words
+        tags = self._tags[:] if self._tags else self._tags
+        _copy = Sentence(self.span, self.text, self.sid, words, tags, self._parse)
         return _copy
 
 
@@ -130,22 +133,24 @@ class RelationNode(CDTNode):
     SN = "SN"
     NN = "NN"
 
-    def __init__(self, span, nuclear, children, relation=None):
+    def __init__(self, span, children, nuclear=None, relation=None):
         CDTNode.__init__(self, "RelationNode")
         self.span = span
         self.nuclear = nuclear
         self.extend(children)
-        if relation is None:
-            relation = Relation()
         self.relation = relation
 
     def label(self):
-        if self.relation.explicit is None:
-            explicit = "未指定"
-        else:
+        nuclear = self.nuclear if self.nuclear is not None else "Undefined"
+        fine = self.relation.fine if self.relation and self.relation.fine else "Undefined"
+        coarse = self.relation.coarse if self.relation and self.relation.coarse else "Undefined"
+        connective = self.relation.connective if self.relation and self.relation.connective is not None else "Undefined"
+        if self.relation and self.relation.explicit is not None:
             explicit = "显式关系" if self.relation.explicit else "隐式关系"
-        return 'Relation %s \n%s %s\n%s %s %s' % (str(self.span), self.nuclear, explicit,
-                                                  self.relation.fine, self.relation.coarse, self.relation.connective)
+        else:
+            explicit = "Undefined"
+
+        return 'Relation %s \n%s %s\n%s %s %s' % (str(self.span), nuclear, explicit, fine, coarse, connective)
 
 
 class Discourse:
@@ -153,17 +158,41 @@ class Discourse:
     SN = RelationNode.SN
     NN = RelationNode.NN
 
-    """ 篇章结构 """
-    def __init__(self, label, text, edus, sentences, info=None):
+    def __init__(self, label, text, span, edus, sentences, info=None):
+        """
+        篇章结构
+        :param label: 篇章编号
+        :param text: 篇章文本
+        :param span: 篇章标注 EDU 和关系的起止偏移量
+        :param edus:
+        :param sentences:
+        :param info:
+        """
         self.label = label
         self.text = text
+        self.span = span
         self.edus = edus
         self.sentences = sentences  # type: List[Sentence]
         self.forest = edus[:]
         self.relations = []  # type: List[RelationNode]
         self.info = info
 
-    def add_relation(self, span, nuclear, parent=None, children=None, relation=None):
+        # 维护的节点索引
+        self._node_id_gen = count()
+        self._idx_node = {}
+        self._node_idx = {}
+        for node in self.edus:
+            node_id = next(self._node_id_gen)
+            self._idx_node[node_id] = node
+            self._node_idx[node] = node_id
+
+    def __getitem__(self, node_id):
+        return self._idx_node[node_id]
+
+    def index(self, node):
+        return self._node_idx[node]
+
+    def add_relation(self, span, nuclear=None, parent=None, children=None, relation=None):
         """
         添加篇章关系，可以自底向上，也可以自顶向下
         :param span: 关系管辖范围
@@ -184,9 +213,13 @@ class Discourse:
         child_indices = [parent.index(child) for child in children]
         for i in sorted(child_indices, reverse=True):
             del parent[i]
-        node = RelationNode(span, nuclear, children, relation)
+        node = RelationNode(span, children, nuclear, relation)
         parent.insert(min(child_indices), node)
         self.relations.append(node)
+        # 更新节点索引
+        node_id = next(self._node_id_gen)
+        self._idx_node[node_id] = node
+        self._node_idx[node] = node_id
         return node
 
     def complete(self):
@@ -215,11 +248,18 @@ class Discourse:
                 return sent
         return None
 
+    def neareset_edus(self, span):
+        for edu in self.edus:
+            if span[0] <= edu.span[0] <= edu.span[1] <= span[1]:
+                yield edu
+
     def traverse(self, root=None, prior=False):
         """ 遍历森林，prior=True则为先序遍历 """
         if root is None:
             for root in self.forest:
                 yield from self.traverse(root, prior)
+        elif isinstance(root, EDU):
+            yield root
         else:
             if prior:
                 yield root
@@ -231,13 +271,20 @@ class Discourse:
             if not prior:
                 yield root
 
-    def __copy__(self):
-        """ 覆盖拷贝函数 """
+    def strip(self):
+        """ 拷贝并去掉篇章中的所有关系，保留 EDU 和 Sentence """
         copy_edus = [EDU(edu.span, edu.text) for edu in self.edus]
         copy_sentence = [copy(sentence) for sentence in self.sentences]
-        self2copy = dict(zip(self.edus, copy_edus))
+        copy_discourse = Discourse(self.label, self.text, self.span, copy_edus, copy_sentence)
+        return copy_discourse
 
-        copy_discourse = Discourse(self.label, self.text, copy_edus, copy_sentence)
+    def __copy__(self):
+        """ 拷贝函数 """
+        copy_edus = [EDU(edu.span, edu.text) for edu in self.edus]
+        copy_sentence = [copy(sentence) for sentence in self.sentences]
+
+        self2copy = dict(zip(self.edus, copy_edus))
+        copy_discourse = Discourse(self.label, self.text, self.span, copy_edus, copy_sentence)
         # copy relation node bottom up
         for node in self.traverse():
             if isinstance(node, RelationNode):
@@ -247,18 +294,27 @@ class Discourse:
                 copy_relation = copy_discourse.add_relation(node.span, node.nuclear,
                                                             children=children, relation=node.relation)
                 self2copy[node] = copy_relation
+
+        # 对齐拷贝对象和原始对象的节点索引
+        copy_discourse._node_id_gen = copy(self._node_id_gen)
+        copy_discourse._idx_node = {}
+        copy_discourse._node_idx = {}
+        for self_node, copy_node in self2copy.items():
+            node_id = self.index(self_node)
+            copy_discourse._idx_node[node_id] = copy_node
+            copy_discourse._node_idx[copy_node] = node_id
         return copy_discourse
 
-    def binarize(self, prior=False):
+    def binarize(self, left_heavy=False):
         """ 二元化篇章树（森林），prior=True 则先合并前面的子节点
-         prior=True: (A B C) -> ((A B) C)
-         prior=False: (A B C) -> (A (B C))
-         """
+        left_heavy=True: (A B C) -> ((A B) C)
+        left_heavy=False: (A B C) -> (A (B C))
+        """
         copy_edus = [EDU(edu.span, edu.text) for edu in self.edus]
         copy_sentence = [copy(sentence) for sentence in self.sentences]
-        self2copy = dict(zip(self.edus, copy_edus))
 
-        bin_discoursre = Discourse(self.label, self.text, copy_edus, copy_sentence)
+        self2copy = dict(zip(self.edus, copy_edus))
+        bin_discoursre = Discourse(self.label, self.text, self.span, copy_edus, copy_sentence)
         # copy relation node bottom up
         for node in self.traverse():
             if isinstance(node, RelationNode):
@@ -266,7 +322,7 @@ class Discourse:
                 for child in node:
                     children.append(self2copy[child])
                 while len(children) > 2:
-                    if prior:
+                    if left_heavy:
                         left = children.popleft()
                         right = children.popleft()
                     else:
@@ -275,7 +331,7 @@ class Discourse:
                     span = left.span[0], right.span[1]
                     bin_relation = bin_discoursre.add_relation(span, node.nuclear,
                                                                children=[left, right], relation=node.relation)
-                    if prior:
+                    if left_heavy:
                         children.appendleft(bin_relation)
                     else:
                         children.append(bin_relation)
