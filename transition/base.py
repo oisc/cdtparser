@@ -71,7 +71,7 @@ class Transition:
 class Session:
     Memory = namedtuple("Memory", "confs actions params")
 
-    def __init__(self, init_conf, trans, history=False):
+    def __init__(self, init_conf, trans, history=False, state=None):
         """
         Session 表示一个转移过程
         :param init_conf: 初始状态
@@ -81,6 +81,7 @@ class Session:
         self.current = init_conf
         self.trans = trans
         self.history = history
+        self.state = state
         if history:
             self.memory = Session.Memory([], [], [])
 
@@ -93,7 +94,7 @@ class Session:
         else:
             conf = self.current
         self.current = self.trans(action, conf, *args, **kwargs)
-        return self.current
+        return self
 
     def valid(self):
         return self.trans.valid(self.current)
@@ -109,6 +110,7 @@ class Session:
         _copy.current = copy(self.current)
         _copy.trans = self.trans
         _copy.history = self.history
+        _copy.state = copy(self.state)
         if self.history:
             _copy.memory = Session.Memory(self.memory.confs[:], self.memory.actions[:], self.memory.params[:])
         return _copy

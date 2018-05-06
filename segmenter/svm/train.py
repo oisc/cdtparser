@@ -47,7 +47,7 @@ def train(discourses):
     with open(clues_file, "r", encoding=clues_encoding) as clues_fd:
         connectives = [line.strip() for line in clues_fd]
     # model
-    random_seed = int(config.get("segmenter.svm", "seed", defult=21))
+    random_seed = config.get("segmenter.svm", "seed", defult=21, rtype=int)
     model = SVMCommaClassifier(connectives, random_seed)
 
     # get train samples from golden discourse

@@ -9,6 +9,7 @@ import pickle
 from abc import abstractmethod
 from typing import List
 from interface import Segmenter, Annotator
+from structure.tree import Discourse
 
 
 class Pipeline:
@@ -25,6 +26,16 @@ class Pipeline:
         return discourse
 
     def __call__(self, label, text, start=0, end=-1, info=None):
+        """
+        按流程进行篇章解析
+        :param label: 篇章编号
+        :param text: 篇章文本
+        :param start: 需要解析的篇章起始偏移量
+        :param end: 需要解析的篇章终止偏移量
+        :param info: 额外调试信息
+        :return: 解析后篇章
+        :rtype: Discourse
+        """
         discourse = self.segment(label, text, start, end, info)
         return self.annotate(discourse)
 
@@ -52,15 +63,28 @@ class Baseline(Schema):
     @staticmethod
     def build_pipeline():
         import config
+        import torch
         from segmenter.svm import SVMCommaSegmenter
+        from treebuilder.spinn import SPINNTreeBuilder
         segmenter_model_dir = config.get("segmenter.svm", "model_dir")
         with open(segmenter_model_dir, "rb") as model_fd:
-            model = pickle.load(model_fd)
-        segmenter = SVMCommaSegmenter(model)
-        return Pipeline(segmenter, [])
+            segmenter_model = pickle.load(model_fd)
+        segmenter = SVMCommaSegmenter(segmenter_model)
+
+        treebuilder_model_dir = config.get("treebuilder.spinn", "model_dir")
+        with open(treebuilder_model_dir, "rb") as model_fd:
+            treebuilder_model = torch.load(model_fd)
+        treebuilder = SPINNTreeBuilder(treebuilder_model)
+        return Pipeline(segmenter, [treebuilder])
 
 
 def create(schema_name):
+    """
+    Pipeline 工厂函数
+    :param schema_name: 解析策略名称
+    :return:
+    :rtype: Pipeline
+    """
     for schema in Schema.__subclasses__():
         if schema.name() == schema_name:
             return schema.build_pipeline()

@@ -1,4 +1,7 @@
+torch
 jieba
 nltk
 tqdm
 sklearn
+numpy
+lxml

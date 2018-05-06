@@ -12,7 +12,7 @@ _config = None
 _config_file = "config.ini"
 
 
-def get(section, key=None, defult=...):
+def get(section, key=None, defult=..., rtype=str):
     global _config
     global _config_file
     if _config is None:
@@ -22,7 +22,7 @@ def get(section, key=None, defult=...):
         if key is None:
             return _config[section]
         else:
-            return _config[section][key]
+            return rtype(_config[section][key])
     except KeyError as e:
         if defult is ...:
             raise e

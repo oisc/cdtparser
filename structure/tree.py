@@ -227,7 +227,9 @@ class Discourse:
         return len(self.forest) == 1
 
     def tree(self):
-        """ 返回篇章树，如果不完整，抛出异常 """
+        """ 返回篇章树根节点，如果不完整，抛出异常
+        :rtype: CDTNode
+        """
         if self.complete():
             return self.forest[0]
         else:

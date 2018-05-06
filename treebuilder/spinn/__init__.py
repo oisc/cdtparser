@@ -1,8 +1,3 @@
 # -*- coding: utf-8 -*-
 
-"""
-@Author: oisc <oisc@outlook.com>
-@Date: 2018/5/4
-@Description: 
-"""
-
+from .annotator import SPINNTreeBuilder
