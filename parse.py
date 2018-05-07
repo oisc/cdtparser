@@ -8,9 +8,7 @@
 from argparse import ArgumentParser
 import os
 from dataset import CDTB
-from util.metrics import CDTBMetrics
 from tqdm import tqdm
-import dataset
 import schemas
 
 
