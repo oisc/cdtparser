@@ -67,25 +67,28 @@ class Tracker(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, hidden_size, num_layers, num_classes):
+    def __init__(self, hidden_size, num_layers, dropout_p, num_classes):
         nn.Module.__init__(self)
-        self.linears = [nn.Linear(hidden_size, hidden_size) for i in range(num_layers-1)]
-        self.activations = [nn.ReLU() for i in range(num_layers - 1)]
+        self.linears = nn.ModuleList([nn.Linear(hidden_size, hidden_size) for _ in range(num_layers-1)])
+        self.activations = nn.ModuleList([nn.ReLU() for _ in range(num_layers - 1)])
+        self.dropouts = nn.ModuleList([nn.Dropout(p=dropout_p) for _ in range(num_layers - 1)])
         self.logits = nn.Linear(hidden_size, num_classes)
 
     def forward(self, hidden):
-        for linear, activation in zip(self.linears, self.activations):
+        for linear, dropout, activation in zip(self.linears, self.dropouts, self.activations):
             hidden = linear(hidden)
+            hidden = dropout(hidden)
             hidden = activation(hidden)
         return self.logits(hidden)
 
 
 class SPINN(nn.Module):
-    def __init__(self, hidden_size, proj_dropout, mlp_layers, word_vocab, word_embedding, labels):
+    def __init__(self, hidden_size, proj_dropout, mlp_layers, mlp_dropout,
+                 pos_vocab, pos_embedding_size, word_vocab, word_embedding, labels):
         nn.Module.__init__(self)
         self.hidden_size = hidden_size
 
-        # build vocab and initialize embedding
+        # build word vocab and initialize embedding
         word2idx = {UNK: 0, PAD: 1}
         for word in word_vocab:
             word2idx[word] = len(word2idx)
@@ -96,20 +99,25 @@ class SPINN(nn.Module):
             word_embedding])
         self.wordemb = nn.Embedding.from_pretrained(torch.FloatTensor(word_embedding), freeze=False)
 
+        # build pos vocab and initialize embedding
+        pos2idx = {UNK: 0, PAD: 1}
+        for pos in pos_vocab:
+            pos2idx[pos] = len(pos2idx)
+        self.pos2idx = pos2idx
+        self.posemb = nn.Embedding(len(self.pos2idx), pos_embedding_size)
+
         # build label index
         self.label_size = len(labels)
-        self.labels = labels
-        self.label2idx = {label: i for i, label in enumerate(labels)}
+        self.labels = list(labels)
+        self.label2idx = {label: i for i, label in enumerate(self.labels)}
 
         self.dumb = nn.Parameter(torch.randn(self.hidden_size * 2))
         self.dumb.requires_grad = True
         self.tracker = Tracker(self.hidden_size)
         self.reducer = Reducer(self.hidden_size)
-        self.proj = nn.Linear(self.wordemb_size * 2, self.hidden_size * 2)
+        self.proj = nn.Linear(self.wordemb_size * 2 + pos_embedding_size, self.hidden_size * 2)
         self.proj_dropout = nn.Dropout(proj_dropout)
-        self.mlp = MLP(hidden_size, mlp_layers, self.label_size)
-
-        self.criterion = nn.CrossEntropyLoss()
+        self.mlp = MLP(hidden_size, mlp_layers, mlp_dropout, self.label_size)
 
     def new_state(self, conf):
         stack = [self.dumb, self.dumb]
@@ -154,6 +162,10 @@ class SPINN(nn.Module):
         w1_id = self.word2idx[w1] if w1 in self.word2idx else self.word2idx[UNK]
         w2_id = self.word2idx[w2] if w2 in self.word2idx else self.word2idx[UNK]
         word_emb = self.wordemb(torch.Tensor([w1_id, w2_id]).long()).view(-1)
-        proj = self.proj(word_emb)
+        tags = [tag for tag, word in discourse.tags(node.span)]
+        t1 = tags[0] if len(tags) else PAD
+        t1_id = self.pos2idx[t1] if t1 in self.pos2idx else self.pos2idx[UNK]
+        pos_emb = self.posemb(torch.Tensor([t1_id]).long()).view(-1)
+        proj = self.proj(torch.cat((word_emb, pos_emb)))
         proj_dropout = self.proj_dropout(proj)
         return proj_dropout

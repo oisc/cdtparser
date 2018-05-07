@@ -16,6 +16,8 @@ import logging
 
 
 jieba.setLogLevel(logging.ERROR)
+LRB = '-LRB-'
+RRB = '-RRB-'
 
 
 class BerkeleyWarpper(object):
@@ -66,8 +68,16 @@ class ZhBerkeleyParser(SentenceParser):
 
     def parse(self, text: str):
         text = ' '.join(self.cut(text))
+        text = text.replace("(", LRB)
+        text = text.replace(")", RRB)
         parse_text = self.berkeley.parse(text)
-        return ParentedTree.fromstring(parse_text)
+        _parse = ParentedTree.fromstring(parse_text)
+        for child in list(_parse.subtrees(lambda t: t.height() == 2 and t.label() != '-NONE-')):
+            if child[0] == LRB:
+                child[0] = '('
+            if child[0] == RRB:
+                child[0] = ')'
+        return _parse
 
     def dependency(self, text):
         raise NotImplementedError()

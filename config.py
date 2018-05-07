@@ -22,7 +22,10 @@ def get(section, key=None, defult=..., rtype=str):
         if key is None:
             return _config[section]
         else:
-            return rtype(_config[section][key])
+            if rtype is bool:
+                return _config[section][key] == "true"
+            else:
+                return rtype(_config[section][key])
     except KeyError as e:
         if defult is ...:
             raise e

@@ -10,11 +10,13 @@ import config
 import gensim
 import torch
 import torch.nn as nn
+import shutil
 import numpy as np
 import logging
 from structure.tree import Discourse, EDU, RelationNode
 from transition import Session
 from transition.shiftreduce import SRConfiguration, SRTransition
+from util.metrics import CDTBMetrics
 from .model import SPINN
 from .annotator import SPINNTreeBuilder
 
@@ -45,17 +47,28 @@ def build_model(discourses):
     word_embedding_file = config.get("treebuilder.spinn", "word_embedding")
     word_vocab, word_embedding = load_pretrained_w2v(word_embedding_file)
 
+    # build part of speech vocab
+    pos_vocab = set()
+    for discourse in discourses:
+        for sentence in discourse.sentences:
+            for pos, word in sentence.tags():
+                pos_vocab.add(pos)
+
     # build label
     labels = set()
     for discourse in discourses:
         for action in sr_oracle(discourse):
             labels.add(action)
+    pos_embedding_size = config.get("treebuilder.spinn", "pos_embedding_size", rtype=int)
 
     hidden_size = config.get("treebuilder.spinn", "hidden_size", rtype=int)
     proj_dropout = config.get("treebuilder.spinn", "proj_dropout", rtype=float)
     mlp_layers = config.get("treebuilder.spinn", "mlp_layers", rtype=int)
-    model = SPINN(hidden_size=hidden_size, proj_dropout=proj_dropout, mlp_layers=mlp_layers,
-                  word_vocab=word_vocab, word_embedding=word_embedding, labels=labels)
+    mlp_dropout = config.get("treebuilder.spinn", "mlp_dropout", rtype=float)
+    model = SPINN(hidden_size=hidden_size, proj_dropout=proj_dropout, mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
+                  pos_vocab=pos_vocab, pos_embedding_size=pos_embedding_size,
+                  word_vocab=word_vocab, word_embedding=word_embedding,
+                  labels=labels)
     return model
 
 
@@ -73,8 +86,9 @@ def evaluate(model, discourses):
     for discourse in discourses:
         parse = treebuilder.annotate(discourse.strip())
         parses.append(parse)
-
-    return 0
+    metrics = CDTBMetrics(discourses, parses)
+    print(metrics.parser_report())
+    return metrics.span_score.f1() + metrics.nuclear_score.f1()
 
 
 def train(cdtb):
@@ -91,6 +105,9 @@ def train(cdtb):
     step = 0
     batch = 0
     batch_loss = 0.
+
+    best_model_score = 0.
+    model_dir = config.get("treebuilder.spinn", "model_dir")
     for epoch in range(num_epoch):
         epoch += 1
         for discourse in np.random.permutation(cdtb.train):
@@ -116,16 +133,18 @@ def train(cdtb):
                 batch += 1
                 optim.step()
                 optim.zero_grad()
-                print("epoch: %d, batch: %d, batch loss: %.3f" % (epoch, batch, batch_loss / batch_size))
+                print("step %d, epoch: %d, batch: %d, batch loss: %.3f" % (step, epoch, batch, batch_loss / batch_size))
                 batch_loss = 0.
                 if batch % eval_every == 0:
-                    eval_loss = evaluate(model, cdtb.test)
-                    print("epoch: %d, batch: %d, eval loss: %.3f" % (epoch, batch, eval_loss))
+                    model_score = evaluate(model, cdtb.test)
+                    if model_score > best_model_score:
+                        best_model_score = model_score
+                        with open("%s.%.3f" % (model_dir, model_score), "wb+") as best_model_fd:
+                            print("save new best model to %s.%.3f" % (model_dir, model_score))
+                            torch.save(model, best_model_fd)
                     model.train()
-
-    model_dir = config.get("treebuilder.spinn", "model_dir")
-    with open(model_dir, "wb+") as model_fd:
-        torch.save(model, model_fd)
+    # copy best model to model dir
+    shutil.copy2("%s.%.3f" % (model_dir, best_model_score), model_dir)
 
 
 def main():
