@@ -99,13 +99,13 @@ def train(cdtb):
     eval_every = config.get("treebuilder.spinn", "eval_every", rtype=int)
     lr = config.get("treebuilder.spinn", "lr", rtype=float)
     l2 = config.get("treebuilder.spinn", "l2_penalty", rtype=float)
+
     criterion = nn.CrossEntropyLoss()
     optim = torch.optim.RMSprop(model.parameters(), lr=lr, weight_decay=l2)
     optim.zero_grad()
     step = 0
     batch = 0
     batch_loss = 0.
-
     best_model_score = 0.
     model_dir = config.get("treebuilder.spinn", "model_dir")
     for epoch in range(num_epoch):

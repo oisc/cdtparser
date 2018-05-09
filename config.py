@@ -7,9 +7,12 @@
 """
 
 import configparser
+import os
 
+
+__prefix = os.path.dirname(__file__)
 _config = None
-_config_file = "config.ini"
+_config_file = os.path.join(__prefix, "config.ini")
 
 
 def get(section, key=None, defult=..., rtype=str):

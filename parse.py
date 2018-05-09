@@ -10,10 +10,11 @@ import os
 from dataset import CDTB
 from tqdm import tqdm
 import schemas
+import config
 
 
 def main(args):
-    pipeline = schemas.create(args.schema)
+    pipeline = schemas.create_pipeline(args.schema)
     for file in tqdm(os.listdir(args.source)):
         discourses = []
         with open(os.path.join(args.source, file), "r", encoding=args.encoding) as source_fd:
@@ -28,7 +29,8 @@ def main(args):
 
 if __name__ == '__main__':
     argparser = ArgumentParser()
-    argparser.add_argument('-schema', required=True)
+    default_schema = config.get("global", "default_schema")
+    argparser.add_argument('--schema', default=default_schema)
     argparser.add_argument('-source', required=True)
     argparser.add_argument('-save', required=True)
     argparser.add_argument('--encoding', default="utf-8")

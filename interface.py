@@ -65,6 +65,22 @@ class Segmenter:
         """
         raise NotImplementedError()
 
+    @abstractmethod
+    def cut_sent(self, text, start=0, end=-1):
+        """
+        将文本切割成句子
+        :return: List[Sentence]
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
+    def cut_edu(self, sentence):
+        """
+        将句子切割成 EDU
+        :param sentence:
+        :return:
+        """
+
 
 class Annotator:
     @abstractmethod

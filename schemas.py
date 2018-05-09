@@ -5,23 +5,28 @@
 @Date: 2018/5/4
 @Description: 解析流水线
 """
+import os
 import pickle
 from abc import abstractmethod
 from typing import List
+import torch
 from interface import Segmenter, Annotator
 from structure.tree import Discourse
+from segmenter.svm import SVMCommaSegmenter
+from treebuilder.stacklstm import StackLSTMTreeBuilder
+import config
 
 
 class Pipeline:
     def __init__(self, segmenter, annotators):
-        self._segmenter = segmenter  # type: Segmenter
-        self._annotators = annotators  # type: List[Annotator]
+        self.segmenter = segmenter  # type: Segmenter
+        self.annotators = annotators  # type: List[Annotator]
 
     def segment(self, label, text, start=0, end=-1, info=None):
-        return self._segmenter.cut(label, text, start, end, info)
+        return self.segmenter.cut(label, text, start, end, info)
 
     def annotate(self, discourse):
-        for annotator in self._annotators:
+        for annotator in self.annotators:
             discourse = annotator.annotate(discourse)
         return discourse
 
@@ -62,23 +67,19 @@ class Baseline(Schema):
 
     @staticmethod
     def build_pipeline():
-        import config
-        import torch
-        from segmenter.svm import SVMCommaSegmenter
-        from treebuilder.spinn import SPINNTreeBuilder
+        __prefix = os.path.dirname(__file__)
         segmenter_model_dir = config.get("segmenter.svm", "model_dir")
-        with open(segmenter_model_dir, "rb") as model_fd:
+        with open(os.path.join(__prefix, segmenter_model_dir), "rb") as model_fd:
             segmenter_model = pickle.load(model_fd)
         segmenter = SVMCommaSegmenter(segmenter_model)
-
-        treebuilder_model_dir = config.get("treebuilder.spinn", "model_dir")
-        with open(treebuilder_model_dir, "rb") as model_fd:
+        treebuilder_model_dir = config.get("treebuilder.stacklstm", "model_dir")
+        with open(os.path.join(__prefix, treebuilder_model_dir), "rb") as model_fd:
             treebuilder_model = torch.load(model_fd)
-        treebuilder = SPINNTreeBuilder(treebuilder_model)
+        treebuilder = StackLSTMTreeBuilder(treebuilder_model)
         return Pipeline(segmenter, [treebuilder])
 
 
-def create(schema_name):
+def create_pipeline(schema_name):
     """
     Pipeline 工厂函数
     :param schema_name: 解析策略名称
@@ -88,3 +89,4 @@ def create(schema_name):
     for schema in Schema.__subclasses__():
         if schema.name() == schema_name:
             return schema.build_pipeline()
+    raise ValueError("No schema named \"%s\"" % schema_name)
