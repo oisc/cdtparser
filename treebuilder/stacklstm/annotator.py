@@ -9,6 +9,7 @@ from interface import Annotator
 from transition import Session
 from transition.shiftreduce import SRTransition, SRConfiguration
 from structure.tree import Relation
+from dataset.cdtb import coarsemap
 
 
 class StackLSTMTreeBuilder(Annotator):
@@ -29,7 +30,7 @@ class StackLSTMTreeBuilder(Annotator):
             if action == SRTransition.SHIFT:
                 session(action)
             else:
-                relation = Relation(fine=fine)
+                relation = Relation(fine=fine, coarse=coarsemap[fine])
                 session(action, nuclear=nuclear, relation=relation)
             session.state = self.model.update(session.state, action, nuclear, fine)
         return session.current.discourse
