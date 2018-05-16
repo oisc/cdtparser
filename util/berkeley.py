@@ -3,11 +3,13 @@
 """
 @Author: oisc <oisc@outlook.com>
 @Date: 2018/5/2
-@Description: 
+@Description: Default syntactic and dependency parser
 """
 
 from interface import SentenceParser
 from nltk.tree import ParentedTree
+from nltk.parse.stanford import StanfordDependencyParser
+from structure.dependency import DependencyGraph
 import subprocess
 import jieba
 from jieba import posseg
@@ -18,10 +20,16 @@ import logging
 jieba.setLogLevel(logging.ERROR)
 LRB = '-LRB-'
 RRB = '-RRB-'
+PREFIX = os.path.dirname(__file__)
+BERKELEY_JAR = os.path.join(PREFIX, "../berkeleyparser/BerkeleyParser-1.7.jar")
+BERKELEY_GRAMMAR = os.path.join(PREFIX, "../berkeleyparser/chn_sm5.gr")
+STANFORD_JAR = os.path.join(PREFIX, "../stanford/stanford-parser.jar")
+STANFORD_MODEL = os.path.join(PREFIX, "../stanford/stanford-chinese-corenlp-2018-02-27-models.jar")
+STANFORD_GRAMMAR = "edu/stanford/nlp/models/lexparser/chinesePCFG.ser.gz"
 
 
 class BerkeleyWarpper(object):
-    def __init__(self, path_to_jar: str, path_to_grammar: str):
+    def __init__(self, path_to_jar: str, path_to_grammar: str, binarize=False):
         self.env = dict(os.environ)
         self.java_opt = ['-Xmx1024m']
         self.jar = path_to_jar
@@ -34,6 +42,8 @@ class BerkeleyWarpper(object):
         cmd = ['java']
         cmd.extend(self.java_opt)
         cmd.extend(['-jar', self.jar, '-gr', self.gr])
+        if binarize:
+            cmd.append('-binarize')
         self.process = subprocess.Popen(cmd, env=self.env, universal_newlines=True, shell=False, bufsize=0,
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -49,13 +59,27 @@ class BerkeleyWarpper(object):
             pass
 
 
+class StanfordWrapper(StanfordDependencyParser):
+    def _execute(self, cmd, input_, verbose=False):
+        # command hack
+        cmd.extend(['-outputFormatOptions', 'includePunctuationDependencies'])
+        return StanfordDependencyParser._execute(self, cmd, input_, verbose)
+
+    def _make_tree(self, result):
+        # pickleable hack
+        return DependencyGraph(result, top_relation_label='root')
+
+    def grammar(self):
+        raise NotImplementedError()
+
+
 class ZhBerkeleyParser(SentenceParser):
     name = "berkeley"
 
-    def __init__(self):
-        _prefix = os.path.dirname(__file__)
-        self.berkeley = BerkeleyWarpper(path_to_jar=os.path.join(_prefix, '../berkeleyparser/BerkeleyParser-1.7.jar'),
-                                        path_to_grammar=os.path.join(_prefix, '../berkeleyparser/chn_sm5.gr'))
+    def __init__(self, binarize=False):
+        self.berkeley = BerkeleyWarpper(path_to_jar=BERKELEY_JAR, path_to_grammar=BERKELEY_GRAMMAR, binarize=binarize)
+        self.stanford = StanfordWrapper(path_to_jar=STANFORD_JAR, path_to_models_jar=STANFORD_MODEL,
+                                        model_path=STANFORD_GRAMMAR)
         self.jieba = jieba
         self.posseg = posseg
 
@@ -80,4 +104,5 @@ class ZhBerkeleyParser(SentenceParser):
         return _parse
 
     def dependency(self, text):
-        raise NotImplementedError()
+        cuted = list(self.cut(text))
+        return next(self.stanford.parse(cuted))

@@ -21,7 +21,7 @@ from .model import SPINN
 from .annotator import SPINNTreeBuilder
 
 
-config_section = "treebuilder.spinn"
+config_section = "treebuilder.spinn_cnn"
 
 
 def sr_oracle(discorse: Discourse):
@@ -62,14 +62,26 @@ def build_model(discourses):
     for discourse in discourses:
         for action in sr_oracle(discourse):
             labels.add(action)
-    pos_embedding_size = config.get(config_section, "pos_embedding_size", rtype=int)
 
+    pos_embedding_size = config.get(config_section, "pos_embedding_size", rtype=int)
+    edu_cutoff = config.get(config_section, "edu_cutoff", rtype=int)
+    position_embedding_size = config.get(config_section, "position_embedding_size", rtype=int)
+    unigram_filter_num = config.get(config_section, "unigram_filter_num", rtype=int)
+    bigram_filter_num = config.get(config_section, "bigram_filter_num", rtype=int)
+    trigram_filter_num = config.get(config_section, "trigram_filter_num", rtype=int)
     hidden_size = config.get(config_section, "hidden_size", rtype=int)
     proj_dropout = config.get(config_section, "proj_dropout", rtype=float)
     mlp_layers = config.get(config_section, "mlp_layers", rtype=int)
     mlp_dropout = config.get(config_section, "mlp_dropout", rtype=float)
-    model = SPINN(hidden_size=hidden_size, proj_dropout=proj_dropout, mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
+    model = SPINN(hidden_size=hidden_size,
+                  proj_dropout=proj_dropout,
+                  mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
                   pos_vocab=pos_vocab, pos_embedding_size=pos_embedding_size,
+                  edu_cutoff=edu_cutoff,
+                  position_embedding_size=position_embedding_size,
+                  unigram_filter_num=unigram_filter_num,
+                  bigram_filter_num=bigram_filter_num,
+                  trigram_filter_num=trigram_filter_num,
                   word_vocab=word_vocab, word_embedding=word_embedding,
                   labels=labels)
     return model
@@ -91,6 +103,7 @@ def evaluate(model, discourses):
         parses.append(parse)
     metrics = CDTBMetrics(discourses, parses)
     print(metrics.parser_report())
+    print(metrics.nuclear_report())
     return metrics.span_score.f1() + metrics.nuclear_score.f1()
 
 
@@ -115,7 +128,7 @@ def train(cdtb):
     for epoch in range(num_epoch):
         epoch += 1
         scheduler.step()
-        print("learning rate: %f" % scheduler.get_lr()[0])
+        print("learning rage: %f" % scheduler.get_lr()[0])
         for discourse in np.random.permutation(cdtb.train):
             step += 1
             session = new_session(model, discourse.strip())
@@ -123,7 +136,8 @@ def train(cdtb):
             grounds = []
             for label in sr_oracle(discourse):
                 action, nuclear = label
-                scores.append(model(session.state))
+                logits = model(session.state)
+                scores.append(logits)
                 grounds.append(model.label2idx[label])
                 if action == SRTransition.SHIFT:
                     session(action)

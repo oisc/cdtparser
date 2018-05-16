@@ -28,6 +28,7 @@ def evaluate_gold_edu():
     schema_name = "baseline"
     pipeline = schemas.create_pipeline(schema_name)
     cdtb = dataset.load_cdtb_by_config()
+    print(len(cdtb.train), len(cdtb.test))
     golds = cdtb.test
     parses = []
     for discourse in tqdm(cdtb.test):

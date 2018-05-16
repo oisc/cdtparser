@@ -13,7 +13,7 @@ import torch
 from interface import Segmenter, Annotator
 from structure.tree import Discourse
 from segmenter.svm import SVMCommaSegmenter
-from treebuilder.stacklstm import StackLSTMTreeBuilder
+from treebuilder.spinn_cnn import SPINNTreeBuilder
 import config
 
 
@@ -72,10 +72,10 @@ class Baseline(Schema):
         with open(os.path.join(__prefix, segmenter_model_dir), "rb") as model_fd:
             segmenter_model = pickle.load(model_fd)
         segmenter = SVMCommaSegmenter(segmenter_model)
-        treebuilder_model_dir = config.get("treebuilder.stacklstm", "model_dir")
+        treebuilder_model_dir = config.get("treebuilder.spinn_cnn", "model_dir")
         with open(os.path.join(__prefix, treebuilder_model_dir), "rb") as model_fd:
             treebuilder_model = torch.load(model_fd)
-        treebuilder = StackLSTMTreeBuilder(treebuilder_model)
+        treebuilder = SPINNTreeBuilder(treebuilder_model)
         return Pipeline(segmenter, [treebuilder])
 
 

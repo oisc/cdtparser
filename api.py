@@ -6,11 +6,11 @@
 @Description: 接口函数
 """
 from nltk import ParentedTree
-
 import config
 import schemas
 from dataset.cdtb import CDTB
 from structure.tree import Sentence
+
 
 _pipeline = None
 

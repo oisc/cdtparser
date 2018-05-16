@@ -21,7 +21,7 @@ from .model import SPINN
 from .annotator import SPINNTreeBuilder
 
 
-config_section = "treebuilder.spinn"
+config_section = "treebuilder.spinn_lex"
 
 
 def sr_oracle(discorse: Discourse):
@@ -75,14 +75,6 @@ def build_model(discourses):
     return model
 
 
-def new_session(model, discourse):
-    transition = SRTransition()
-    conf = SRConfiguration(discourse.strip())
-    state = model.new_state(conf)
-    session = Session(conf, transition, history=True, state=state)
-    return session
-
-
 def evaluate(model, discourses):
     treebuilder = SPINNTreeBuilder(model)
     parses = []
@@ -96,7 +88,8 @@ def evaluate(model, discourses):
 
 def train(cdtb):
     model = build_model(cdtb.train)
-    model.train()
+    transition = SRTransition()
+
     num_epoch = config.get(config_section, "num_epoch", rtype=int)
     batch_size = config.get(config_section, "batch_size", rtype=int)
     eval_every = config.get(config_section, "eval_every", rtype=int)
@@ -106,7 +99,9 @@ def train(cdtb):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.RMSprop(model.parameters(), lr=lr, weight_decay=l2)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [3, 6, 12], gamma=0.5)
+    model.train()
     optimizer.zero_grad()
+
     step = 0
     batch = 0
     batch_loss = 0.
@@ -118,7 +113,9 @@ def train(cdtb):
         print("learning rate: %f" % scheduler.get_lr()[0])
         for discourse in np.random.permutation(cdtb.train):
             step += 1
-            session = new_session(model, discourse.strip())
+            conf = SRConfiguration(discourse.strip())
+            state = model.new_state(conf)
+            session = Session(conf, transition, state=state)
             scores = []
             grounds = []
             for label in sr_oracle(discourse):
@@ -149,7 +146,7 @@ def train(cdtb):
                             print("save new best model to %s.%.3f" % (model_dir, model_score))
                             torch.save(model, best_model_fd)
                     model.train()
-    # copy best model to model dir
+        # copy best model to model dir
     shutil.copy2("%s.%.3f" % (model_dir, best_model_score), model_dir)
 
 

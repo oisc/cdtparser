@@ -21,7 +21,7 @@ from .model import SPINN
 from .annotator import SPINNTreeBuilder
 
 
-config_section = "treebuilder.spinn"
+config_section = "treebuilder.spinn_bilstm"
 
 
 def sr_oracle(discorse: Discourse):
@@ -62,13 +62,16 @@ def build_model(discourses):
     for discourse in discourses:
         for action in sr_oracle(discourse):
             labels.add(action)
-    pos_embedding_size = config.get(config_section, "pos_embedding_size", rtype=int)
 
     hidden_size = config.get(config_section, "hidden_size", rtype=int)
+    pos_embedding_size = config.get(config_section, "pos_embedding_size", rtype=int)
+    edu_rnn_encoder_size = config.get(config_section, "edu_rnn_encoder_size", rtype=int)
     proj_dropout = config.get(config_section, "proj_dropout", rtype=float)
     mlp_layers = config.get(config_section, "mlp_layers", rtype=int)
     mlp_dropout = config.get(config_section, "mlp_dropout", rtype=float)
-    model = SPINN(hidden_size=hidden_size, proj_dropout=proj_dropout, mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
+    model = SPINN(hidden_size=hidden_size, proj_dropout=proj_dropout,
+                  mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
+                  edu_rnn_encoder_size=edu_rnn_encoder_size,
                   pos_vocab=pos_vocab, pos_embedding_size=pos_embedding_size,
                   word_vocab=word_vocab, word_embedding=word_embedding,
                   labels=labels)
@@ -91,6 +94,7 @@ def evaluate(model, discourses):
         parses.append(parse)
     metrics = CDTBMetrics(discourses, parses)
     print(metrics.parser_report())
+    print(metrics.nuclear_report())
     return metrics.span_score.f1() + metrics.nuclear_score.f1()
 
 
@@ -105,7 +109,7 @@ def train(cdtb):
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.RMSprop(model.parameters(), lr=lr, weight_decay=l2)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [3, 6, 12], gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [3, 6], gamma=0.5)
     optimizer.zero_grad()
     step = 0
     batch = 0
@@ -115,7 +119,7 @@ def train(cdtb):
     for epoch in range(num_epoch):
         epoch += 1
         scheduler.step()
-        print("learning rate: %f" % scheduler.get_lr()[0])
+        print("learning rage: %f" % scheduler.get_lr()[0])
         for discourse in np.random.permutation(cdtb.train):
             step += 1
             session = new_session(model, discourse.strip())
@@ -123,7 +127,8 @@ def train(cdtb):
             grounds = []
             for label in sr_oracle(discourse):
                 action, nuclear = label
-                scores.append(model(session.state))
+                logits = model(session.state)
+                scores.append(logits)
                 grounds.append(model.label2idx[label])
                 if action == SRTransition.SHIFT:
                     session(action)

@@ -8,13 +8,13 @@
 import os
 import pickle
 import re
-import tqdm
-from itertools import chain
+from tqdm import tqdm
 from typing import List
 from xml.etree import ElementTree
 from lxml import etree as et
 from nltk.tree import ParentedTree
 from structure.tree import EDU, Sentence, Relation, Discourse, RelationNode
+import multiprocessing
 from util import ZhDefaultParser
 import logging
 
@@ -32,11 +32,32 @@ nuclear_map = {"1": Discourse.NS, "2": Discourse.SN, "3": Discourse.NN}
 nuclear_map_rev = {v: k for k, v in nuclear_map.items()}
 
 
+class DiscorseProcessor:
+    def __init__(self, ctb=None):
+        self.parsers = {}
+        self.ctb = ctb
+
+    def __call__(self, discourse):
+        process_name = multiprocessing.current_process().name
+        if process_name not in self.parsers:
+            self.parsers[process_name] = ZhDefaultParser()
+        parser = self.parsers[process_name]
+        for sentence in discourse.sentences:
+            if sentence.sid and self.ctb and sentence.sid in self.ctb:
+                sentence.set(parse=self.ctb[sentence.sid])
+            else:
+                sentence.set(parse=parser.parse(sentence.text))
+        for edu in discourse.edus:
+            edu.store['parse'] = parser.parse(edu.text)
+            edu.store['dependency'] = parser.dependency(edu.text)
+        return discourse
+
+
 class CDTB:
     """
     CDTB 数据集工具类
     """
-    def __init__(self, train, test, ctb=None, cache_dir=None, encoding="utf-8", ctb_encoding="utf-8"):
+    def __init__(self, train, test, ctb=None, cache_dir=None, encoding="utf-8", ctb_encoding="utf-8", threads=10):
         """
         :param train: 训练集路径
         :param test: 测试集路径
@@ -54,6 +75,7 @@ class CDTB:
         self.test = []  # type: List[Discourse]
         self.cache_dir = cache_dir
         self.cdtb_encoding = encoding
+        self.threads = threads
         self.build()
 
     def build(self):
@@ -71,20 +93,27 @@ class CDTB:
 
         # load train set
         logger.info("loading train set")
-        self.train.extend(self.load(self.train_path, self.cdtb_encoding))
+        train = list(self.load(self.train_path, self.cdtb_encoding))
 
         # load test set
         logger.info("loading test set")
-        self.test.extend(self.load(self.test_path, self.cdtb_encoding))
+        test = list(self.load(self.test_path, self.cdtb_encoding))
 
         # add syntactic information
         logger.info("add syntactic parse to sentence")
         if not self.ctb:
             logger.info("Notice! CTB is not given, %s parser will be used to generate extra syntacitcal information. "
                         "This may take a while." % self.parser.name)
-        for discourse in tqdm.tqdm(chain(self.train, self.test)):
-            for sentence in discourse.sentences:
-                sentence.set(parse=self.lookup_parse(sentence))
+
+        process_pool = multiprocessing.Pool(self.threads)
+        worker = DiscorseProcessor(self.ctb)
+        self.train = list(tqdm(
+            process_pool.imap(worker, train),
+            desc="processing train set", total=len(train)))
+        self.test = list(tqdm(
+            process_pool.imap(worker, test),
+            desc="processing test set", total=len(test)
+        ))
 
         # save as cache file
         if self.cache_dir:
@@ -102,15 +131,9 @@ class CDTB:
                     ctb[sid] = ParentedTree.fromstring(parse)
         return ctb
 
-    def lookup_parse(self, sentence):
-        if sentence.sid and self.ctb and sentence.sid in self.ctb:
-            return self.ctb[sentence.sid]
-        else:
-            return self.parser.parse(sentence.text)
-
     @staticmethod
     def load(path, encoding="utf-8"):
-        for file in tqdm.tqdm(os.listdir(path)):
+        for file in tqdm(os.listdir(path)):
             yield from CDTB.load_xml(os.path.join(path, file), encoding)
 
     @staticmethod

@@ -8,15 +8,17 @@
 from collections import deque
 from copy import copy
 from itertools import chain, count
-from typing import List
+from typing import List, Dict
 from nltk.tree import ParentedTree
 
 
 class CDTNode(ParentedTree):
     """ 篇章树节点基类 """
     def __init__(self, nodename):
-        self._nodename = nodename
         ParentedTree.__init__(self, nodename, [])
+        self._nodename = nodename
+        # 存储节点额外信息，注意，拷贝时只会浅拷贝
+        self.store = {}
 
     def _get_node(self):
         raise DeprecationWarning()
@@ -171,7 +173,7 @@ class Discourse:
         self.label = label
         self.text = text
         self.span = span
-        self.edus = edus
+        self.edus = edus  # type: List[EDU]
         self.sentences = sentences  # type: List[Sentence]
         self.forest = edus[:]
         self.relations = []  # type: List[RelationNode]
@@ -179,8 +181,8 @@ class Discourse:
 
         # 维护的节点索引
         self._node_id_gen = count()
-        self._idx_node = {}
-        self._node_idx = {}
+        self._idx_node = {}  # type: Dict[int, CDTNode]
+        self._node_idx = {}  # type: Dict[CDTNode, int]
         for node in self.edus:
             node_id = next(self._node_id_gen)
             self._idx_node[node_id] = node
@@ -276,6 +278,8 @@ class Discourse:
     def strip(self):
         """ 拷贝并去掉篇章中的所有关系，保留 EDU 和 Sentence """
         copy_edus = [EDU(edu.span, edu.text) for edu in self.edus]
+        for self_edu, copy_edu in zip(self.edus, copy_edus):
+            copy_edu.store = self_edu.store.copy()
         copy_sentence = [copy(sentence) for sentence in self.sentences]
         copy_discourse = Discourse(self.label, self.text, self.span, copy_edus, copy_sentence)
         return copy_discourse
@@ -305,6 +309,7 @@ class Discourse:
             node_id = self.index(self_node)
             copy_discourse._idx_node[node_id] = copy_node
             copy_discourse._node_idx[copy_node] = node_id
+            copy_node.store = self_node.store.copy()
         return copy_discourse
 
     def binarize(self, left_heavy=False):
@@ -340,4 +345,6 @@ class Discourse:
                 copy_relation = bin_discoursre.add_relation(node.span, node.nuclear,
                                                             children=children, relation=node.relation)
                 self2copy[node] = copy_relation
+        for self_node, copy_node in self2copy.items():
+            copy_node.store = self_node.store.copy()
         return bin_discoursre

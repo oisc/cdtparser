@@ -21,7 +21,7 @@ from .model import SPINN
 from .annotator import SPINNTreeBuilder
 
 
-config_section = "treebuilder.spinn"
+config_section = "treebuilder.spinn_bow"
 
 
 def sr_oracle(discorse: Discourse):
@@ -91,6 +91,7 @@ def evaluate(model, discourses):
         parses.append(parse)
     metrics = CDTBMetrics(discourses, parses)
     print(metrics.parser_report())
+    print(metrics.nuclear_report())
     return metrics.span_score.f1() + metrics.nuclear_score.f1()
 
 
@@ -115,7 +116,7 @@ def train(cdtb):
     for epoch in range(num_epoch):
         epoch += 1
         scheduler.step()
-        print("learning rate: %f" % scheduler.get_lr()[0])
+        print("learning rage: %f" % scheduler.get_lr()[0])
         for discourse in np.random.permutation(cdtb.train):
             step += 1
             session = new_session(model, discourse.strip())
@@ -123,7 +124,8 @@ def train(cdtb):
             grounds = []
             for label in sr_oracle(discourse):
                 action, nuclear = label
-                scores.append(model(session.state))
+                logits = model(session.state)
+                scores.append(logits)
                 grounds.append(model.label2idx[label])
                 if action == SRTransition.SHIFT:
                     session(action)

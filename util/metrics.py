@@ -197,12 +197,12 @@ class CDTBMetrics:
                 correct_fine_counter.update([parse_quad[2]])
             if gold_quad[3] == parse_quad[3]:
                 correct_coarse_counter.update([parse_quad[3]])
-        for fine in set(gold_fine_counter.keys()) & set(parse_fine_counter.keys()):
+        for fine in set(gold_fine_counter.keys()) | set(parse_fine_counter.keys()):
             self.fine_class_scores[fine] += correct_fine_counter[fine], \
                                             gold_fine_counter[fine], \
                                             parse_fine_counter[fine]
 
-        for coarse in set(gold_coarse_counter.keys()) & set(parse_coarse_counter.keys()):
+        for coarse in set(gold_coarse_counter.keys()) | set(parse_coarse_counter.keys()):
             self.coarse_class_scores[coarse] += correct_coarse_counter[coarse],\
                                                 gold_coarse_counter[coarse],\
                                                 parse_coarse_counter[coarse]
