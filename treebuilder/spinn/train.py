@@ -68,19 +68,13 @@ def build_model(discourses):
     proj_dropout = config.get(config_section, "proj_dropout", rtype=float)
     mlp_layers = config.get(config_section, "mlp_layers", rtype=int)
     mlp_dropout = config.get(config_section, "mlp_dropout", rtype=float)
-    model = SPINN(hidden_size=hidden_size, proj_dropout=proj_dropout, mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
+    model = SPINN(hidden_size=hidden_size,
+                  proj_dropout=proj_dropout,
+                  mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
                   pos_vocab=pos_vocab, pos_embedding_size=pos_embedding_size,
                   word_vocab=word_vocab, word_embedding=word_embedding,
                   labels=labels)
     return model
-
-
-def new_session(model, discourse):
-    transition = SRTransition()
-    conf = SRConfiguration(discourse.strip())
-    state = model.new_state(conf)
-    session = Session(conf, transition, history=True, state=state)
-    return session
 
 
 def evaluate(model, discourses):
@@ -96,7 +90,8 @@ def evaluate(model, discourses):
 
 def train(cdtb):
     model = build_model(cdtb.train)
-    model.train()
+    transition = SRTransition()
+
     num_epoch = config.get(config_section, "num_epoch", rtype=int)
     batch_size = config.get(config_section, "batch_size", rtype=int)
     eval_every = config.get(config_section, "eval_every", rtype=int)
@@ -106,7 +101,9 @@ def train(cdtb):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.RMSprop(model.parameters(), lr=lr, weight_decay=l2)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [3, 6, 12], gamma=0.5)
+    model.train()
     optimizer.zero_grad()
+
     step = 0
     batch = 0
     batch_loss = 0.
@@ -118,7 +115,9 @@ def train(cdtb):
         print("learning rate: %f" % scheduler.get_lr()[0])
         for discourse in np.random.permutation(cdtb.train):
             step += 1
-            session = new_session(model, discourse.strip())
+            conf = SRConfiguration(discourse.strip())
+            state = model.new_state(conf)
+            session = Session(conf, transition, state=state)
             scores = []
             grounds = []
             for label in sr_oracle(discourse):

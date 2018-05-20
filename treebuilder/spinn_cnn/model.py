@@ -15,8 +15,6 @@ import numpy as np
 
 UNK = "<UNK>"
 PAD = "<PAD>"
-START = "<START>"
-END = "<END>"
 
 
 class SPINNState:
@@ -26,8 +24,8 @@ class SPINNState:
         self.tracking = tracking
 
     def __copy__(self):
-        stack = [s.clone() for s in self.stack]
-        buffer = [b.clone() for b in self.buffer]
+        stack = [(hs.clone(), cs.clone()) for hs, cs in self.stack]
+        buffer = deque([(hb.clone(), cb.clone()) for hb, cb in self.buffer])
         h, c = self.tracking
         tracking = h.clone(), c.clone()
         return SPINNState(stack, buffer, tracking)
@@ -37,14 +35,15 @@ class Reducer(nn.Module):
     def __init__(self, hidden_size):
         nn.Module.__init__(self)
         self.hidden_size = hidden_size
-        self.comp = nn.Linear(self.hidden_size * 2, self.hidden_size * 5)
+        self.comp = nn.Linear(self.hidden_size * 3, self.hidden_size * 5)
 
     def forward(self, state):
-        (h1, c1), (h2, c2) = state.stack[-2].chunk(2), state.stack[-1].chunk(2)
-        a, i, f1, f2, o = self.comp(torch.cat([h1, h2])).chunk(5)
+        (h1, c1), (h2, c2) = state.stack[-2], state.stack[-1]
+        tracking = state.tracking[0].view(-1)
+        a, i, f1, f2, o = self.comp(torch.cat([h1, h2, tracking])).chunk(5)
         c = a.tanh() * i.sigmoid() + f1.sigmoid() * c1 + f2.sigmoid() * c2
         h = o.sigmoid() * c.tanh()
-        return torch.cat([h, c])
+        return h, c
 
 
 class Tracker(nn.Module):
@@ -58,11 +57,8 @@ class Tracker(nn.Module):
 
     def forward(self, state):
         stack, buffer, tracking = state.stack, state.buffer, state.tracking
-        s2, s1 = stack[-2], stack[-1]
-        b1 = buffer[0]
-        s2h, _ = s2.chunk(2)
-        s1h, _ = s2.chunk(2)
-        b1h, _ = b1.chunk(2)
+        (s2h, _), (s1h, _) = stack[-2], stack[-1]
+        b1h, _ = buffer[0]
         cell_input = torch.cat([s2h, s1h, b1h]).view(1, -1)
         tracking = self.rnn(cell_input, tracking)
         return tracking
@@ -79,8 +75,8 @@ class MLP(nn.Module):
     def forward(self, hidden):
         for linear, dropout, activation in zip(self.linears, self.dropouts, self.activations):
             hidden = linear(hidden)
-            hidden = dropout(hidden)
             hidden = activation(hidden)
+            hidden = dropout(hidden)
         return self.logits(hidden)
 
 
@@ -115,7 +111,7 @@ class SPINN(nn.Module):
         self.positionemb = nn.Embedding(edu_cutoff + 1, position_embedding_size)
 
         # convolution layer
-        cnn_input_width = self.wordemb_size + position_embedding_size + pos_embedding_size
+        cnn_input_width = self.wordemb_size + pos_embedding_size + position_embedding_size
         self.edu_unigram_cnn = nn.Conv2d(1, unigram_filter_num, (1, cnn_input_width), padding=(0, 0))
         self.edu_bigram_cnn = nn.Conv2d(1, bigram_filter_num, (2, cnn_input_width), padding=(1, 0))
         self.edu_trigram_cnn = nn.Conv2d(1, trigram_filter_num, (3, cnn_input_width), padding=(2, 0))
@@ -135,18 +131,18 @@ class SPINN(nn.Module):
         self.mlp = MLP(hidden_size, mlp_layers, mlp_dropout, self.label_size)
 
     def new_state(self, conf):
-        stack = [self.dumb, self.dumb]
+        stack = [self.dumb.chunk(2), self.dumb.chunk(2)]
         buffer = deque()
         for idx in conf.buffer:
             buffer.append(self.node_encode(conf.discourse, idx))
-        buffer.append(self.dumb)
+        buffer.append(self.dumb.chunk(2))
         tracker_init_state = self.tracker.init_state()
         state = SPINNState(stack, buffer, tracker_init_state)
         state = self.update_tracking(state)
         return state
 
     def forward(self, state):
-        tracking_h = state.tracking[1].view(-1)
+        tracking_h = state.tracking[0].view(-1)
         return self.mlp(tracking_h)
 
     def score(self, state):
@@ -169,30 +165,36 @@ class SPINN(nn.Module):
         state.tracking = tracking
         return state
 
+    def edu_cnn_encode(self, word_emb, tags_emb, position_emb):
+        cnn_input = torch.cat([word_emb, tags_emb, position_emb], dim=1)
+        # convolution input size (batch, in_chanel, seq_len, features_size)
+        cnn_input = cnn_input.view(1, 1, cnn_input.size(0), cnn_input.size(1))
+        # convolution output size (batch, filter_num, seq_strip_times)
+        unigram_output = nnfunc.relu(self.edu_unigram_cnn(cnn_input)).squeeze(-1)
+        bigram_output = nnfunc.relu(self.edu_bigram_cnn(cnn_input)).squeeze(-1)
+        trigram_output = nnfunc.relu(self.edu_trigram_cnn(cnn_input)).squeeze(-1)
+        # max pooling
+        unigram_feats = nnfunc.max_pool1d(unigram_output, kernel_size=unigram_output.size(2)).view(-1)
+        bigram_feats = nnfunc.max_pool1d(bigram_output, kernel_size=bigram_output.size(2)).view(-1)
+        trigram_feats = nnfunc.max_pool1d(trigram_output, kernel_size=trigram_output.size(2)).view(-1)
+        return torch.cat([unigram_feats, bigram_feats, trigram_feats], dim=0)
+
     def node_encode(self, discourse, node_index):
         node = discourse[node_index]
         words = [word if word in self.word2idx else UNK for tag, word in discourse.tags(node.span)] or [PAD]
         tags = [tag if tag in self.pos2idx else UNK for tag, word in discourse.tags(node.span)] or [PAD]
-        positions = [i + 1 if i + 1 <= self.edu_cutoff else self.edu_cutoff
+        positions = [i + 1 if i < self.edu_cutoff else self.edu_cutoff
                      for i, word in enumerate(discourse.words(node.span))] or [0]
-
         word_emb = self.wordemb(torch.Tensor([self.word2idx[word] for word in words]).long())
-        tag_emb = self.posemb(torch.Tensor([self.pos2idx[tag] for tag in tags]).long())
+        tags_emb = self.posemb(torch.Tensor([self.pos2idx[tag] for tag in tags]).long())
         position_emb = self.positionemb(torch.Tensor(positions).long())
-        w1_emb = word_emb[0]
-        w2_emb = word_emb[-1]
-        t1_emb = tag_emb[0]
 
-        # convolution features
-        conv_input = torch.cat([word_emb, tag_emb, position_emb], dim=1).expand(1, 1, -1, -1)
-        unigram_output = nnfunc.relu(self.edu_unigram_cnn(conv_input)).squeeze(-1)
-        unigram_fets = nnfunc.max_pool1d(unigram_output, len(words)).view(-1)
-        bigram_output = nnfunc.relu(self.edu_bigram_cnn(conv_input)).squeeze(-1)
-        bigram_fets = nnfunc.max_pool1d(bigram_output, len(words) + 1).view(-1)
-        trigram_output = nnfunc.relu(self.edu_trigram_cnn(conv_input)).squeeze(-1)
-        trigram_fets = nnfunc.max_pool1d(trigram_output, len(words) + 1).view(-1)
+        w1 = word_emb[0]
+        w2 = word_emb[-1]
+        t1 = tags_emb[0]
+        cnn_emb = self.edu_cnn_encode(word_emb, tags_emb, position_emb)
 
-        edu_fets = torch.cat((w1_emb, w2_emb, t1_emb, unigram_fets, bigram_fets, trigram_fets), 0)
-        proj = self.proj(edu_fets)
+        edu_emb = torch.cat([w1, w2, t1, cnn_emb])
+        proj = self.proj(edu_emb)
         proj_dropout = self.proj_dropout(proj)
-        return proj_dropout
+        return proj_dropout.chunk(2)

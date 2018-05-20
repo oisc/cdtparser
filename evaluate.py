@@ -13,29 +13,23 @@ import schemas
 from util.metrics import CDTBMetrics
 
 
-def evaluate(args):
-    golds = list(dataset.CDTB.load(args.gold))
-    parses = {d.label: d for d in dataset.CDTB.load(args.parse)}
-    parses = [parses[g.label] for g in golds]
-    metrics = CDTBMetrics(golds, parses)
-    print(metrics.segmenter_report())
-    print(metrics.parser_report())
-    print(metrics.nuclear_report())
-    print(metrics.relation_report())
-
-
-def evaluate_gold_edu():
-    schema_name = "baseline"
+def evaluate(schema_name, use_gold_edu=False):
     pipeline = schemas.create_pipeline(schema_name)
     cdtb = dataset.load_cdtb_by_config()
-    print(len(cdtb.train), len(cdtb.test))
-    golds = cdtb.test
     parses = []
-    for discourse in tqdm(cdtb.test):
-        parse = pipeline.annotate(discourse.strip())
-        parses.append(parse)
-    metrics = CDTBMetrics(golds, parses)
-    print(metrics.segmenter_report())
+    if use_gold_edu:
+        print("parsing with gold EDU")
+    else:
+        print("parsing with auto discourse segmenter")
+    for gold in tqdm(cdtb.test, desc="parsing for evaluation"):
+        if use_gold_edu:
+            discourse = pipeline.annotate(gold.strip())
+        else:
+            discourse = pipeline(gold.label, gold.text, gold.span[0], gold.span[1], gold.info)
+        parses.append(discourse)
+    metrics = CDTBMetrics(golds=cdtb.test, parses=parses)
+    if not use_gold_edu:
+        print(metrics.segmenter_report())
     print(metrics.parser_report())
     print(metrics.nuclear_report())
     print(metrics.relation_report())
@@ -44,8 +38,8 @@ def evaluate_gold_edu():
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     argparser = ArgumentParser()
-    argparser.add_argument('-parse', required=True)
-    argparser.add_argument('-gold', required=True)
-    argparser.add_argument('--encoding', default="utf-8")
-    evaluate(argparser.parse_args())
-    # evaluate_gold_edu()
+    argparser.add_argument('-schema_name', required=True)
+    argparser.add_argument('--use_gold_edu', dest='use_gold_edu', action='store_true')
+    argparser.set_defaults(use_gold_edu=False)
+    args = argparser.parse_args()
+    evaluate(args.schema_name, args.use_gold_edu)

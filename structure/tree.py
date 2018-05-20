@@ -32,6 +32,9 @@ class CDTNode(ParentedTree):
     def __repr__(self):
         return "<%s@%d>" % (self._nodename, hash(self))
 
+    def __eq__(self, other):
+        return self is other
+
 
 class EDU(CDTNode):
     """ 基本篇章单元 """

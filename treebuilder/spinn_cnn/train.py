@@ -87,14 +87,6 @@ def build_model(discourses):
     return model
 
 
-def new_session(model, discourse):
-    transition = SRTransition()
-    conf = SRConfiguration(discourse.strip())
-    state = model.new_state(conf)
-    session = Session(conf, transition, history=True, state=state)
-    return session
-
-
 def evaluate(model, discourses):
     treebuilder = SPINNTreeBuilder(model)
     parses = []
@@ -103,13 +95,13 @@ def evaluate(model, discourses):
         parses.append(parse)
     metrics = CDTBMetrics(discourses, parses)
     print(metrics.parser_report())
-    print(metrics.nuclear_report())
     return metrics.span_score.f1() + metrics.nuclear_score.f1()
 
 
 def train(cdtb):
     model = build_model(cdtb.train)
-    model.train()
+    transition = SRTransition()
+
     num_epoch = config.get(config_section, "num_epoch", rtype=int)
     batch_size = config.get(config_section, "batch_size", rtype=int)
     eval_every = config.get(config_section, "eval_every", rtype=int)
@@ -119,7 +111,9 @@ def train(cdtb):
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.RMSprop(model.parameters(), lr=lr, weight_decay=l2)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [3, 6, 12], gamma=0.5)
+    model.train()
     optimizer.zero_grad()
+
     step = 0
     batch = 0
     batch_loss = 0.
@@ -128,16 +122,17 @@ def train(cdtb):
     for epoch in range(num_epoch):
         epoch += 1
         scheduler.step()
-        print("learning rage: %f" % scheduler.get_lr()[0])
+        print("learning rate: %f" % scheduler.get_lr()[0])
         for discourse in np.random.permutation(cdtb.train):
             step += 1
-            session = new_session(model, discourse.strip())
+            conf = SRConfiguration(discourse.strip())
+            state = model.new_state(conf)
+            session = Session(conf, transition, state=state)
             scores = []
             grounds = []
             for label in sr_oracle(discourse):
                 action, nuclear = label
-                logits = model(session.state)
-                scores.append(logits)
+                scores.append(model(session.state))
                 grounds.append(model.label2idx[label])
                 if action == SRTransition.SHIFT:
                     session(action)
