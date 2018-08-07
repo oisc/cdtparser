@@ -6,9 +6,12 @@
 @Description: Segmenter as comma classification
 Ref: 李艳翠, 冯文贺, 周国栋, 等. 基于逗号的汉语子句识别研究[J]. 北京大学学报 (自然科学版), 2013, 49(1): 7-14.
 """
-from interface import Segmenter
+from interface import Segmenter, SentenceParseError, SegmentError
 from util import ZhDefaultParser
 from structure.tree import Sentence, EDU, Discourse
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SVMCommaSegmenter(Segmenter):
@@ -63,7 +66,11 @@ class SVMCommaSegmenter(Segmenter):
             end = len(text)
         sentences = []
         edus = []
-        for sentence in self.cut_sent(text, start, end):
-            sentences.append(sentence)
-            edus.extend(self.cut_edu(sentence))
+        try:
+            for sentence in self.cut_sent(text, start, end):
+                sentences.append(sentence)
+                edus.extend(self.cut_edu(sentence))
+        except SentenceParseError as e:
+            logger.error("during segmenting %s, %s" % (label, e))
+            raise SegmentError("error segmenting %s" % label, label, text, start, end, info)
         return Discourse(label, text, (start, end), edus, sentences)

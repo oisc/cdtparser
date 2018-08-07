@@ -44,7 +44,9 @@ class SVMCommaClassifier:
                 comma_index = i
             offset += len(child[0])
 
-        assert comma is not None
+        if comma is None:
+            return {}
+
         comma_prev = []
         comma_post = []
         if comma_index > 0:

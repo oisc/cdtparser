@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as nnfunc
 import numpy as np
+from structure.tree import Discourse
 
 
 UNK = "<UNK>"
@@ -29,21 +30,6 @@ class SPINNState:
         h, c = self.tracking
         tracking = h.clone(), c.clone()
         return SPINNState(stack, buffer, tracking)
-
-
-class Reducer(nn.Module):
-    def __init__(self, hidden_size):
-        nn.Module.__init__(self)
-        self.hidden_size = hidden_size
-        self.comp = nn.Linear(self.hidden_size * 3, self.hidden_size * 5)
-
-    def forward(self, state):
-        (h1, c1), (h2, c2) = state.stack[-2], state.stack[-1]
-        tracking = state.tracking[0].view(-1)
-        a, i, f1, f2, o = self.comp(torch.cat([h1, h2, tracking])).chunk(5)
-        c = a.tanh() * i.sigmoid() + f1.sigmoid() * c1 + f2.sigmoid() * c2
-        h = o.sigmoid() * c.tanh()
-        return h, c
 
 
 class Tracker(nn.Module):
@@ -81,7 +67,7 @@ class MLP(nn.Module):
 
 
 class SPINN(nn.Module):
-    def __init__(self, hidden_size, proj_dropout, mlp_layers, mlp_dropout, edu_rnn_encoder_size,
+    def __init__(self, hidden_size, proj_dropout, mlp_layers, mlp_dropout,
                  pos_vocab, pos_embedding_size, word_vocab, word_embedding, labels):
         nn.Module.__init__(self)
         self.hidden_size = hidden_size
@@ -102,7 +88,6 @@ class SPINN(nn.Module):
         for pos in pos_vocab:
             pos2idx[pos] = len(pos2idx)
         self.pos2idx = pos2idx
-        self.posemb_size = pos_embedding_size
         self.posemb = nn.Embedding(len(self.pos2idx), pos_embedding_size)
 
         # build label index
@@ -113,18 +98,7 @@ class SPINN(nn.Module):
         self.dumb = nn.Parameter(torch.randn(self.hidden_size * 2))
         self.dumb.requires_grad = True
         self.tracker = Tracker(self.hidden_size)
-        self.reducer = Reducer(self.hidden_size)
-        # bilstm + attention
-        self.edu_rnn_encoder_size = edu_rnn_encoder_size
-        self.edu_rnn_encoder = nn.LSTM(self.wordemb_size + self.posemb_size, edu_rnn_encoder_size // 2,
-                                       bidirectional=True)
-        self.edu_attn_query = nn.Parameter(torch.randn(edu_rnn_encoder_size))
-        self.edu_attn = nn.Sequential(
-            nn.Linear(edu_rnn_encoder_size, edu_rnn_encoder_size),
-            nn.Tanh()
-        )
-
-        self.proj = nn.Linear(self.wordemb_size * 2 + pos_embedding_size + edu_rnn_encoder_size, self.hidden_size * 2)
+        self.proj = nn.Linear(self.wordemb_size * 3 + pos_embedding_size, self.hidden_size * 2)
         self.proj_dropout = nn.Dropout(proj_dropout)
         self.mlp = MLP(hidden_size, mlp_layers, mlp_dropout, self.label_size)
 
@@ -151,23 +125,19 @@ class SPINN(nn.Module):
         state.stack.append(state.buffer.popleft())
         return self.update_tracking(state)
 
-    def reduce(self, state):
-        reduced = self.reducer(state)
-        state.stack.pop()
-        state.stack.pop()
-        state.stack.append(reduced)
+    def reduce(self, state, nuclear):
+        right = state.stack.pop()
+        left = state.stack.pop()
+        if nuclear == Discourse.SN:
+            state.stack.append(right)
+        else:
+            state.stack.append(left)
         return self.update_tracking(state)
 
     def update_tracking(self, state):
         tracking = self.tracker(state)
         state.tracking = tracking
         return state
-
-    def edu_bilstm_encode(self, word_emb, tags_emb):
-        inputs = torch.cat([word_emb, tags_emb], 1).unsqueeze(1)  # (seq_len, batch, input_size)
-        hs, (ht, ct) = self.edu_rnn_encoder(inputs)
-        output = ht.view(-1)
-        return output, None
 
     def node_encode(self, discourse, node_index):
         node = discourse[node_index]
@@ -179,9 +149,9 @@ class SPINN(nn.Module):
         w1 = word_emb[0]
         w2 = word_emb[-1]
         t1 = tags_emb[0]
-        rnn_emb, _ = self.edu_bilstm_encode(word_emb, tags_emb)
+        bow = word_emb.mean(dim=0)
 
-        edu_emb = torch.cat([w1, w2, t1, rnn_emb])
+        edu_emb = torch.cat([w1, w2, t1, bow])
         proj = self.proj(edu_emb)
         proj_dropout = self.proj_dropout(proj)
         return proj_dropout.chunk(2)

@@ -165,9 +165,12 @@ class SPINN(nn.Module):
 
     def edu_bilstm_encode(self, word_emb, tags_emb):
         inputs = torch.cat([word_emb, tags_emb], 1).unsqueeze(1)  # (seq_len, batch, input_size)
-        hs, (ht, ct) = self.edu_rnn_encoder(inputs)
-        output = ht.view(-1)
-        return output, None
+        hs, _ = self.edu_rnn_encoder(inputs)  # hs.size()  (seq_len, batch, hidden_size)
+        hs = hs.squeeze()  # size: (seq_len, hidden_size)
+        keys = self.edu_attn(hs)  # size: (seq_len, hidden_size)
+        attn = nnfunc.softmax(keys.matmul(self.edu_attn_query), 0)
+        output = (hs * attn.view(-1, 1)).sum(0)
+        return output, attn
 
     def node_encode(self, discourse, node_index):
         node = discourse[node_index]

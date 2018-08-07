@@ -5,12 +5,12 @@
 @Date: 2018/5/2
 @Description: Default syntactic and dependency parser
 """
-
-from interface import SentenceParser
+from interface import SentenceParser, SentenceParseError
 from nltk.tree import ParentedTree
 from nltk.parse.stanford import StanfordDependencyParser
 from structure.dependency import DependencyGraph
 import subprocess
+import threading
 import jieba
 from jieba import posseg
 import os
@@ -29,14 +29,18 @@ STANFORD_GRAMMAR = "edu/stanford/nlp/models/lexparser/chinesePCFG.ser.gz"
 
 
 class BerkeleyWarpper(object):
-    def __init__(self, path_to_jar: str, path_to_grammar: str, binarize=False):
+    def __init__(self, path_to_jar: str, path_to_grammar: str, binarize=False, timeout=20):
         self.env = dict(os.environ)
         self.java_opt = ['-Xmx1024m']
         self.jar = path_to_jar
         self.gr = path_to_grammar
+        self.timeout = timeout
 
         # check java
-        # subprocess.check_output(['java', '-version'])
+        try:
+            subprocess.run(['java', '-version'])
+        except subprocess.CalledProcessError:
+            raise EnvironmentError("Java should be placed in system PATH environment!")
 
         # start berkeley parser process
         cmd = ['java']
@@ -44,19 +48,43 @@ class BerkeleyWarpper(object):
         cmd.extend(['-jar', self.jar, '-gr', self.gr])
         if binarize:
             cmd.append('-binarize')
-        self.process = subprocess.Popen(cmd, env=self.env, universal_newlines=True, shell=False, bufsize=0,
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.cmd = cmd
+        self.start()
 
-    def parse(self, text: str):
+    def start(self):
+        self.process = subprocess.Popen(self.cmd, env=self.env, universal_newlines=True, shell=False, bufsize=0,
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        errors='ignore')
+
+    def stop(self):
+        if hasattr(self, "process") and self.process:
+            self.process.terminate()
+
+    def restart(self):
+        self.stop()
+        self.start()
+
+    def parse_thread(self, text, results):
         self.process.stdin.write(text + '\n')
         self.process.stdin.flush()
-        return self.process.stdout.readline().strip()
+        ret = self.process.stdout.readline().strip()
+        results.append(ret)
+
+    def parse(self, text: str):
+        results = []
+        t = threading.Thread(target=self.parse_thread, kwargs={'text': text, 'results': results})
+        t.setDaemon(True)
+        t.start()
+        t.join(self.timeout)
+
+        if not results:
+            self.restart()
+            raise TimeoutError
+        else:
+            return results[0]
 
     def __del__(self):
-        try:
-            self.process.terminate()
-        except KeyboardInterrupt:
-            pass
+        self.stop()
 
 
 class StanfordWrapper(StanfordDependencyParser):
@@ -91,11 +119,19 @@ class ZhBerkeleyParser(SentenceParser):
             yield pair.word, pair.flag
 
     def parse(self, text: str):
-        text = ' '.join(self.cut(text))
-        text = text.replace("(", LRB)
-        text = text.replace(")", RRB)
-        parse_text = self.berkeley.parse(text)
-        _parse = ParentedTree.fromstring(parse_text)
+        _text = ' '.join(self.cut(text))
+        _text = _text.replace("(", LRB)
+        _text = _text.replace(")", RRB)
+        try:
+            parse_text = self.berkeley.parse(_text)
+            _parse = ParentedTree.fromstring(parse_text)
+        except TimeoutError:
+            raise SentenceParseError("timeout parsing sentence \"%s\"" % text)
+        except ValueError:
+            raise SentenceParseError("error parsing sentence %s to tree format" % text)
+        if not _parse.leaves():
+            raise SentenceParseError("get an empty parse tree for sentence: \"%s\"" % text)
+
         for child in list(_parse.subtrees(lambda t: t.height() == 2 and t.label() != '-NONE-')):
             if child[0] == LRB:
                 child[0] = '('

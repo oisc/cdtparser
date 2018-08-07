@@ -92,7 +92,7 @@ def evaluate(discourses, model):
 
 def main():
     cdtb = dataset.load_cdtb_by_config()
-    model = train(cdtb.train)
+    model = train(cdtb.train + cdtb.validate)
     model_dir = config.get("segmenter.svm", "model_dir")
     save(model, model_dir)
     evaluate(cdtb.test, model)

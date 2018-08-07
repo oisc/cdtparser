@@ -21,7 +21,7 @@ from .model import SPINN
 from .annotator import SPINNTreeBuilder
 
 
-config_section = "treebuilder.spinn_bow"
+config_section = "treebuilder.spinn_bilstm_attn"
 
 
 def sr_oracle(discorse: Discourse):
@@ -62,15 +62,16 @@ def build_model(discourses):
     for discourse in discourses:
         for action in sr_oracle(discourse):
             labels.add(action)
-    pos_embedding_size = config.get(config_section, "pos_embedding_size", rtype=int)
 
     hidden_size = config.get(config_section, "hidden_size", rtype=int)
+    pos_embedding_size = config.get(config_section, "pos_embedding_size", rtype=int)
+    edu_rnn_encoder_size = config.get(config_section, "edu_rnn_encoder_size", rtype=int)
     proj_dropout = config.get(config_section, "proj_dropout", rtype=float)
     mlp_layers = config.get(config_section, "mlp_layers", rtype=int)
     mlp_dropout = config.get(config_section, "mlp_dropout", rtype=float)
-    model = SPINN(hidden_size=hidden_size,
-                  proj_dropout=proj_dropout,
+    model = SPINN(hidden_size=hidden_size, proj_dropout=proj_dropout,
                   mlp_layers=mlp_layers, mlp_dropout=mlp_dropout,
+                  edu_rnn_encoder_size=edu_rnn_encoder_size,
                   pos_vocab=pos_vocab, pos_embedding_size=pos_embedding_size,
                   word_vocab=word_vocab, word_embedding=word_embedding,
                   labels=labels)
@@ -99,7 +100,7 @@ def train(cdtb):
     l2 = config.get(config_section, "l2_penalty", rtype=float)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=l2)
+    optimizer = torch.optim.RMSprop(model.parameters(), lr=lr, weight_decay=l2)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [3, 6, 12], gamma=0.5)
     model.train()
     optimizer.zero_grad()

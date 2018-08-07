@@ -5,9 +5,9 @@
 @Date: 2018/5/4
 @Description: 
 """
-from copy import copy
 import math
 from collections import namedtuple
+from copy import copy
 from interface import Annotator
 from transition import Session
 from transition.shiftreduce import SRTransition, SRConfiguration

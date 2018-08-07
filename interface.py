@@ -49,6 +49,10 @@ class SentenceParser:
         raise NotImplementedError()
 
 
+class SentenceParseError(Exception):
+    """ 句法解析错误 """
+
+
 class Segmenter:
     """ 篇章子句分割器接口 """
 
@@ -82,7 +86,23 @@ class Segmenter:
         """
 
 
+class SegmentError(Exception):
+    def __init__(self, message, label, text, start, end, info):
+        self.message = message
+        self.label = label
+        self.text = text
+        self.start = start
+        self.end = end
+        self.info = info
+
+
 class Annotator:
     @abstractmethod
     def annotate(self, discourse):
         raise NotImplementedError()
+
+
+class ParseError(Exception):
+    def __init__(self, message, last_discourse):
+        self.message = message
+        self.last_discourse = last_discourse

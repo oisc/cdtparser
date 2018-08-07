@@ -99,7 +99,7 @@ def train(cdtb):
     l2 = config.get(config_section, "l2_penalty", rtype=float)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=l2)
+    optimizer = torch.optim.RMSprop(model.parameters(), lr=lr, weight_decay=l2)
     scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, [3, 6, 12], gamma=0.5)
     model.train()
     optimizer.zero_grad()
@@ -129,7 +129,7 @@ def train(cdtb):
                     session.state = model.shift(session.state)
                 else:
                     session(action, nuclear=nuclear)
-                    session.state = model.reduce(session.state)
+                    session.state = model.reduce(session.state, nuclear)
             loss = criterion(torch.stack(scores), torch.Tensor(grounds).long())
             loss.backward()
             batch_loss += loss.item()
@@ -141,8 +141,7 @@ def train(cdtb):
                 print("step %d, epoch: %d, batch: %d, batch loss: %.3f" % (step, epoch, batch, batch_loss / batch_size))
                 batch_loss = 0.
                 if batch % eval_every == 0:
-                    model_score = evaluate(model, cdtb.validate)
-                    evaluate(model, cdtb.test)
+                    model_score = evaluate(model, cdtb.test)
                     if model_score > best_model_score:
                         best_model_score = model_score
                         with open("%s.%.3f" % (model_dir, model_score), "wb+") as best_model_fd:

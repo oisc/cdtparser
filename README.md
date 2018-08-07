@@ -47,7 +47,7 @@ pwd
 ```
 篇章解析命令：
 ```
-$ python3 -m cdtparser.parse [--schema 解析策略，可选] --source 待解析文本路径 --save 解析后保存路径
+$ python3 -m cdtparser.parse [--schema 解析策略  --encoding 编码  --jobs 进程数] -source raw -save parse
 ```
 
 * API 使用

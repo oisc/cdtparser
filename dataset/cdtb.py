@@ -32,32 +32,40 @@ nuclear_map = {"1": Discourse.NS, "2": Discourse.SN, "3": Discourse.NN}
 nuclear_map_rev = {v: k for k, v in nuclear_map.items()}
 
 
-class DiscorseProcessor:
-    def __init__(self, ctb=None):
-        self.parsers = {}
-        self.ctb = ctb
+worker_ctb = None
+worker_parser = None
 
-    def __call__(self, discourse):
-        process_name = multiprocessing.current_process().name
-        if process_name not in self.parsers:
-            self.parsers[process_name] = ZhDefaultParser()
-        parser = self.parsers[process_name]
-        for sentence in discourse.sentences:
-            if sentence.sid and self.ctb and sentence.sid in self.ctb:
-                sentence.set(parse=self.ctb[sentence.sid])
-            else:
-                sentence.set(parse=parser.parse(sentence.text))
-        for edu in discourse.edus:
-            edu.store['parse'] = parser.parse(edu.text)
-            edu.store['dependency'] = parser.dependency(edu.text)
-        return discourse
+
+def worker_initializer(ctb=None):
+    global worker_ctb, worker_parser
+    worker_ctb = ctb
+    worker_parser = ZhDefaultParser()
+
+
+def worker_fn(discourse):
+    global worker_ctb, worker_parser
+    for sentence in discourse.sentences:
+        if sentence.sid and worker_ctb and sentence.sid in worker_ctb:
+            sentence.set(parse=worker_ctb[sentence.sid])
+        else:
+            sentence.set(parse=worker_parser.parse(sentence.text))
+    return discourse
+
+
+class ErrorEmptyDiscourse:
+    def __init__(self, label, text, start, end, info):
+        self.label = label
+        self.text = text
+        self.span = start, end
+        self.info = info
 
 
 class CDTB:
     """
     CDTB 数据集工具类
     """
-    def __init__(self, train, test, ctb=None, cache_dir=None, encoding="utf-8", ctb_encoding="utf-8", threads=10):
+    def __init__(self, train, validate, test, ctb=None, cache_dir=None, encoding="utf-8", ctb_encoding="utf-8",
+                 threads=2):
         """
         :param train: 训练集路径
         :param test: 测试集路径
@@ -67,11 +75,13 @@ class CDTB:
         :param ctb_encoding: CTB 编码
         """
         self.train_path = train
+        self.validate_path = validate
         self.test_path = test
         self.ctb_encoding = ctb_encoding
         self.ctb = self.load_ctb(ctb, ctb_encoding) if ctb else None
         self.parser = ZhDefaultParser()
         self.train = []  # type: List[Discourse]
+        self.validate = []  # type: List[Discourse]
         self.test = []  # type: List[Discourse]
         self.cache_dir = cache_dir
         self.cdtb_encoding = encoding
@@ -80,38 +90,44 @@ class CDTB:
 
     def build(self):
         # cache key
-        cache_key = "CDTB_cache_%s.pickle" % ("ctb" if self.ctb else self.parser.name)
+        cache_key = "CDTB_cache_%s.pickle" % "ctb" if self.ctb else self.parser.name
         if self.cache_dir:
-            # if cache exists load from cache
+            # load from cache if exists
             cache_file = os.path.join(self.cache_dir, cache_key)
             if os.path.exists(cache_file):
                 logger.info("load cached CDTB dataset from %s" % cache_key)
                 with open(cache_file, "rb") as cache_fd:
                     self.train = pickle.load(cache_fd)
+                    self.validate = pickle.load(cache_fd)
                     self.test = pickle.load(cache_fd)
                 return
 
         # load train set
         logger.info("loading train set")
         train = list(self.load(self.train_path, self.cdtb_encoding))
-
+        # load validate set
+        logger.info("loading validate set")
+        validate = list(self.load(self.validate_path, self.cdtb_encoding))
         # load test set
         logger.info("loading test set")
         test = list(self.load(self.test_path, self.cdtb_encoding))
 
         # add syntactic information
-        logger.info("add syntactic parse to sentence")
+        logger.info("add syntactic information to discourse for further training")
         if not self.ctb:
             logger.info("Notice! CTB is not given, %s parser will be used to generate extra syntacitcal information. "
-                        "This may take a while." % self.parser.name)
-
-        process_pool = multiprocessing.Pool(self.threads)
-        worker = DiscorseProcessor(self.ctb)
+                        % self.parser.name)
+        logger.info("This may take a while")
+        process_pool = multiprocessing.Pool(self.threads, initializer=worker_initializer, initargs={"ctb": self.ctb})
         self.train = list(tqdm(
-            process_pool.imap(worker, train),
+            process_pool.imap(worker_fn, train),
             desc="processing train set", total=len(train)))
+        self.validate = list(tqdm(
+            process_pool.imap(worker_fn, validate),
+            desc="processing validate set", total=len(validate)
+        ))
         self.test = list(tqdm(
-            process_pool.imap(worker, test),
+            process_pool.imap(worker_fn, test),
             desc="processing test set", total=len(test)
         ))
 
@@ -120,6 +136,7 @@ class CDTB:
             logger.info("save cached CDTB dataset to %s" % cache_key)
             with open(os.path.join(self.cache_dir, cache_key), "wb+") as cache_fd:
                 pickle.dump(self.train, cache_fd)
+                pickle.dump(self.validate, cache_fd)
                 pickle.dump(self.test, cache_fd)
 
     @staticmethod
@@ -140,11 +157,28 @@ class CDTB:
     def save_xml(discourses, path, encoding="utf-8"):
         doc = et.Element("DOC")  # type: et.Element
         for i, discourse in enumerate(discourses):
-            p = CDTB._discourse2dom(discourse)
+            if isinstance(discourse, Discourse):
+                p = CDTB._discourse2dom(discourse)
+            else:
+                p = CDTB._error2dom(discourse)
             p.attrib["Order"] = str(i + 1)
             doc.append(p)
         with open(path, "w+", encoding=encoding) as dom_df:
             dom_df.write(et.tostring(doc, pretty_print=True, encoding=encoding).decode(encoding))
+
+    @staticmethod
+    def _error2dom(discourse: ErrorEmptyDiscourse):
+        p = et.Element("P")
+        p.attrib["ID"] = "-" + str(discourse.label)
+        raw = et.Element("RAW")
+        raw.attrib["Sentence"] = discourse.text
+        raw.attrib["AnnotatedPosition"] = CDTB._pos2xml([discourse.span])
+        raw.attrib["SentencePosition"] = ""
+        raw.attrib["EduPosition"] = ""
+        raw.attrib["SID"] = ""
+        raw.attrib["ROOT"] = ""
+        p.append(raw)
+        return p
 
     @staticmethod
     def _discourse2dom(discourse: Discourse):

@@ -141,7 +141,8 @@ def train(cdtb):
                 print("step %d, epoch: %d, batch: %d, batch loss: %.3f" % (step, epoch, batch, batch_loss / batch_size))
                 batch_loss = 0.
                 if batch % eval_every == 0:
-                    model_score = evaluate(model, cdtb.test)
+                    model_score = evaluate(model, cdtb.validate)
+                    evaluate(model, cdtb.test)
                     if model_score > best_model_score:
                         best_model_score = model_score
                         with open("%s.%.3f" % (model_dir, model_score), "wb+") as best_model_fd:
