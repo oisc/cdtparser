@@ -42,7 +42,7 @@ class SPINNTreeBuilder(Annotator):
                                 session.state = self.model.shift(session.state)
                             else:
                                 session(action, nuclear=nuclear)
-                                session.state = self.model.reduce(session.state, nuclear)
+                                session.state = self.model.reduce(session.state)
                             cost = -math.log(prob)
                             next_fringe.append(BeamNode(session=session, cost=node.cost + cost))
             fringe = sorted(next_fringe, key=lambda n: n.cost)[:self.beam_size]

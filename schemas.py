@@ -72,7 +72,7 @@ class Baseline(Schema):
         with open(os.path.join(__prefix, segmenter_model_dir), "rb") as model_fd:
             segmenter_model = pickle.load(model_fd)
         segmenter = SVMCommaSegmenter(segmenter_model)
-        treebuilder_model_dir = config.get("treebuilder.spinn_bow", "model_dir")
+        treebuilder_model_dir = config.get("treebuilder.spinn_cnn", "model_dir")
         beam_size = config.get("treebuilder.spinn_bow", "beam_size", rtype=int)
         with open(os.path.join(__prefix, treebuilder_model_dir), "rb") as model_fd:
             treebuilder_model = torch.load(model_fd)
